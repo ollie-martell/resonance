@@ -136,12 +136,31 @@
                 </div>
                 <div id="embed-iframe"></div>
                 <div id="exportArea" style="display:none; margin-top:14px">
-                    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap">
-                        <button class="reroll-btn" id="exportBtn">&#11015;&nbsp;&nbsp;Export with Instrumental</button>
-                        <span id="exportStatus" style="font-size:0.82rem; opacity:0.7"></span>
-                    </div>
-                    <div class="progress-bar" id="exportProgressBar" style="display:none; margin-top:8px">
-                        <div class="progress-fill" id="exportProgressFill"></div>
+                    <button class="reroll-btn" id="exportTriggerBtn">&#11015;&nbsp;&nbsp;Export with Instrumental</button>
+                    <div id="exportSettings" style="display:none; margin-top:10px; padding:12px 14px; border:1px solid rgba(255,255,255,0.1); border-radius:10px; background:rgba(255,255,255,0.04)">
+                        <div class="volume-row" style="margin-bottom:6px">
+                            <span class="vol-label" style="min-width:116px">Song starts at</span>
+                            <input type="range" class="vol-slider" id="exportScrubber" min="0" max="1000" step="1" value="0">
+                            <span class="vol-pct" id="exportScrubTime" style="min-width:76px">0:00 / 0:00</span>
+                        </div>
+                        <div class="volume-row" style="margin-bottom:6px">
+                            <span class="vol-label" style="min-width:116px">Video audio</span>
+                            <input type="range" class="vol-slider" id="exportVideoVol" min="0" max="1" step="0.01" value="1">
+                            <span class="vol-pct" id="exportVideoVolPct">100%</span>
+                        </div>
+                        <div class="volume-row" style="margin-bottom:12px">
+                            <span class="vol-label" style="min-width:116px">Instrumental</span>
+                            <input type="range" class="vol-slider" id="exportMusicVol" min="0" max="1" step="0.01" value="0.8">
+                            <span class="vol-pct" id="exportMusicVolPct">80%</span>
+                        </div>
+                        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
+                            <button class="reroll-btn" id="exportCancelBtn">Cancel</button>
+                            <button class="reroll-btn" id="exportConfirmBtn">&#11015;&nbsp;&nbsp;Confirm &amp; Export</button>
+                            <span id="exportStatus" style="font-size:0.82rem; opacity:0.7; flex:1"></span>
+                        </div>
+                        <div class="progress-bar" id="exportProgressBar" style="display:none; margin-top:8px">
+                            <div class="progress-fill" id="exportProgressFill"></div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -307,24 +326,69 @@
 
         // ── Export ──────────────────────────────────────────────────────
         const exportArea         = document.getElementById('exportArea');
-        const exportBtn          = document.getElementById('exportBtn');
+        const exportTriggerBtn   = document.getElementById('exportTriggerBtn');
+        const exportSettings     = document.getElementById('exportSettings');
+        const exportScrubber     = document.getElementById('exportScrubber');
+        const exportScrubTime    = document.getElementById('exportScrubTime');
+        const exportVideoVol     = document.getElementById('exportVideoVol');
+        const exportVideoVolPct  = document.getElementById('exportVideoVolPct');
+        const exportMusicVol     = document.getElementById('exportMusicVol');
+        const exportMusicVolPct  = document.getElementById('exportMusicVolPct');
+        const exportCancelBtn    = document.getElementById('exportCancelBtn');
+        const exportConfirmBtn   = document.getElementById('exportConfirmBtn');
         const exportStatus       = document.getElementById('exportStatus');
         const exportProgressBar  = document.getElementById('exportProgressBar');
         const exportProgressFill = document.getElementById('exportProgressFill');
 
-        exportBtn.addEventListener('click', async () => {
+        exportScrubber.addEventListener('input', () => {
+            if (songDurationMs > 0) {
+                const pos = (parseInt(exportScrubber.value) / 1000) * songDurationMs;
+                exportScrubTime.textContent = formatTime(pos) + ' / ' + formatTime(songDurationMs);
+            }
+        });
+        exportVideoVol.addEventListener('input', () => {
+            exportVideoVolPct.textContent = Math.round(parseFloat(exportVideoVol.value) * 100) + '%';
+        });
+        exportMusicVol.addEventListener('input', () => {
+            exportMusicVolPct.textContent = Math.round(parseFloat(exportMusicVol.value) * 100) + '%';
+        });
+
+        // Open settings panel, pre-fill from current playback state
+        exportTriggerBtn.addEventListener('click', () => {
+            exportScrubber.value = songScrubber.value;
+            const pos = songDurationMs > 0
+                ? (parseInt(exportScrubber.value) / 1000) * songDurationMs : 0;
+            exportScrubTime.textContent = formatTime(pos) + ' / ' + formatTime(songDurationMs);
+            exportVideoVol.value = videoVolSlider.value;
+            exportVideoVolPct.textContent = Math.round(parseFloat(videoVolSlider.value) * 100) + '%';
+            exportMusicVol.value = musicVolSlider.value;
+            exportMusicVolPct.textContent = Math.round(parseFloat(musicVolSlider.value) * 100) + '%';
+            exportStatus.textContent = '';
+            exportProgressBar.style.display = 'none';
+            exportProgressFill.style.width = '0%';
+            exportConfirmBtn.disabled = false;
+            exportCancelBtn.disabled = false;
+            exportSettings.style.display = 'block';
+        });
+
+        exportCancelBtn.addEventListener('click', () => {
+            exportSettings.style.display = 'none';
+        });
+
+        exportConfirmBtn.addEventListener('click', async () => {
             if (!lastVideoId || !currentUri) return;
 
             const start_ms  = songDurationMs > 0
-                ? Math.round((parseInt(songScrubber.value) / 1000) * songDurationMs)
+                ? Math.round((parseInt(exportScrubber.value) / 1000) * songDurationMs)
                 : 0;
-            const video_vol = parseFloat(videoVolSlider.value);
-            const music_vol = parseFloat(musicVolSlider.value);
+            const video_vol = parseFloat(exportVideoVol.value);
+            const music_vol = parseFloat(exportMusicVol.value);
 
-            exportBtn.disabled = true;
-            exportStatus.textContent = '';
+            exportConfirmBtn.disabled = true;
+            exportCancelBtn.disabled  = true;
             exportProgressBar.style.display = 'block';
             exportProgressFill.style.width = '0%';
+            exportStatus.textContent = '';
 
             try {
                 const resp = await fetch('/export', {
@@ -343,7 +407,8 @@
                 if (!resp.ok) {
                     const err = await resp.json().catch(() => ({}));
                     exportStatus.textContent = err.error || 'Export failed.';
-                    exportBtn.disabled = false;
+                    exportConfirmBtn.disabled = false;
+                    exportCancelBtn.disabled  = false;
                     exportProgressBar.style.display = 'none';
                     return;
                 }
@@ -363,7 +428,8 @@
                         const event = JSON.parse(part.slice(6));
                         if (event.error) {
                             exportStatus.textContent = 'Error: ' + event.error;
-                            exportBtn.disabled = false;
+                            exportConfirmBtn.disabled = false;
+                            exportCancelBtn.disabled  = false;
                             exportProgressBar.style.display = 'none';
                             return;
                         }
@@ -374,7 +440,8 @@
                                 exportProgressBar.style.display = 'none';
                                 exportProgressFill.style.width = '0%';
                                 exportStatus.innerHTML = `<a href="/download/${event.export_id}" style="color:rgba(255,255,255,0.9);text-decoration:underline;font-weight:500">&#11015; Download ready — click to save</a>`;
-                                exportBtn.disabled = false;
+                                exportConfirmBtn.disabled = false;
+                                exportCancelBtn.disabled  = false;
                             }, 300);
                             return;
                         }
@@ -382,7 +449,8 @@
                 }
             } catch {
                 exportStatus.textContent = 'Export failed — is the server running?';
-                exportBtn.disabled = false;
+                exportConfirmBtn.disabled = false;
+                exportCancelBtn.disabled  = false;
                 exportProgressBar.style.display = 'none';
             }
         });
@@ -559,8 +627,9 @@
                         songScrubber.value = 0;
                         songTime.textContent = '0:00 / ' + formatTime(songDurationMs);
 
-                        // Show export area, reset status
+                        // Show export trigger, collapse any open settings panel
                         exportArea.style.display = 'block';
+                        exportSettings.style.display = 'none';
                         exportStatus.textContent = '';
                         exportProgressBar.style.display = 'none';
                         exportProgressFill.style.width = '0%';
@@ -644,6 +713,7 @@
                 lastVideoId = null;
             }
             exportArea.style.display = 'none';
+            exportSettings.style.display = 'none';
             exportStatus.textContent = '';
             exportProgressBar.style.display = 'none';
             exportProgressFill.style.width = '0%';
