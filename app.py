@@ -240,6 +240,16 @@ def prepare_instrumental():
     )
 
 
+@app.route("/serve-video/<video_id>")
+def serve_video(video_id):
+    if not all(c in "0123456789abcdef" for c in video_id):
+        return "Invalid ID", 400
+    path = os.path.join(UPLOAD_DIR, f"{video_id}.mp4")
+    if not os.path.exists(path):
+        return "Not found", 404
+    return send_file(path, mimetype="video/mp4", conditional=True)
+
+
 @app.route("/serve-instrumental/<instr_id>")
 def serve_instrumental(instr_id):
     if not all(c in "0123456789abcdef" for c in instr_id):

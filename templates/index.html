@@ -928,7 +928,14 @@
                 document.getElementById('rerollBtn').style.display = 'inline-block';
                 results.style.display = 'block';
                 exportArea.style.display = 'block';
-                // Note: video preview unavailable after reload, but export still works
+
+                // Restore video from server so preview and live mix still work
+                fetch('/serve-video/' + s.video_id, { method: 'HEAD' }).then(r => {
+                    if (r.ok) {
+                        videoEl.src = '/serve-video/' + s.video_id;
+                        document.getElementById('playerSection').style.display = 'block';
+                    }
+                }).catch(() => {});
             } catch {}
         })();
     </script>
