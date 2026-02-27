@@ -208,14 +208,15 @@ def export_video():
 
 @app.route("/prepare-instrumental", methods=["POST"])
 def prepare_instrumental():
-    data      = request.get_json()
-    song_name = data.get("song_name", "")
-    artist    = data.get("artist", "")
+    data        = request.get_json()
+    song_name   = data.get("song_name", "")
+    artist      = data.get("artist", "")
+    duration_ms = data.get("duration_ms")          # Spotify track duration for scoring
 
     def generate():
         try:
             yield _sse({"progress": 30, "message": "Searching YouTube for instrumental\u2026"})
-            mp3_path = download_instrumental(song_name, artist)
+            mp3_path = download_instrumental(song_name, artist, duration_ms=duration_ms)
 
             # Extract the uid embedded in the filename: instr_{uid}.mp3
             filename     = os.path.basename(mp3_path)

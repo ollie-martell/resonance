@@ -475,7 +475,7 @@
                 const resp = await fetch('/prepare-instrumental', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ song_name: currentSongName, artist: currentSongArtist }),
+                    body: JSON.stringify({ song_name: currentSongName, artist: currentSongArtist, duration_ms: songDurationMs || null }),
                 });
                 if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).error || 'Failed');
 
