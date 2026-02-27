@@ -1,13 +1,15 @@
 import os
 import json
+import uuid
 import secrets
 from urllib.parse import urlencode
-from flask import Flask, render_template, request, jsonify, redirect, session, Response, stream_with_context
+from flask import Flask, render_template, request, jsonify, redirect, session, Response, stream_with_context, send_file, after_this_request
 import requests as http
 from dotenv import load_dotenv
 from transcriber import transcribe
 from vibe_analyzer import analyze_vibe
 from spotify_recommender import recommend
+from exporter import download_instrumental, mix_and_export, EXPORT_DIR
 
 load_dotenv()
 
@@ -17,6 +19,7 @@ app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024
 
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(EXPORT_DIR, exist_ok=True)
 
 CLIENT_ID     = os.getenv("SPOTIPY_CLIENT_ID")
 CLIENT_SECRET = os.getenv("SPOTIPY_CLIENT_SECRET")
@@ -98,7 +101,8 @@ def analyze():
     if not video.filename.lower().endswith(".mp4"):
         return jsonify({"error": "Only MP4 files are supported"}), 400
 
-    video_path = os.path.join(UPLOAD_DIR, "temp_upload.mp4")
+    video_id   = uuid.uuid4().hex
+    video_path = os.path.join(UPLOAD_DIR, f"{video_id}.mp4")
     video.save(video_path)
 
     def generate():
@@ -107,6 +111,8 @@ def analyze():
 
             transcript = transcribe(video_path)
             if not transcript["text"].strip():
+                if os.path.exists(video_path):
+                    os.remove(video_path)
                 yield _sse({"error": "No speech detected in the video"})
                 return
 
@@ -125,21 +131,99 @@ def analyze():
                 "vibe_read": vibe["vibe_read"],
                 "tracks": tracks,
                 "duration": transcript.get("duration"),
+                "video_id": video_id,
             })
         except ValueError as e:
+            if os.path.exists(video_path):
+                os.remove(video_path)
             yield _sse({"error": str(e)})
         except Exception as e:
             print(f"Error: {e}")
-            yield _sse({"error": f"Processing failed: {str(e)}"})
-        finally:
             if os.path.exists(video_path):
                 os.remove(video_path)
+            yield _sse({"error": f"Processing failed: {str(e)}"})
+        # Video is intentionally kept on disk for export; client calls /cleanup when done
 
     return Response(
         stream_with_context(generate()),
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.route("/export", methods=["POST"])
+def export_video():
+    data      = request.get_json()
+    video_id  = data.get("video_id", "")
+    song_name = data.get("song_name", "")
+    artist    = data.get("artist", "")
+    start_ms  = int(data.get("start_ms", 0))
+    video_vol = float(data.get("video_vol", 1.0))
+    music_vol = float(data.get("music_vol", 1.0))
+
+    if not all(c in "0123456789abcdef" for c in video_id):
+        return jsonify({"error": "Invalid video ID"}), 400
+
+    video_path = os.path.join(UPLOAD_DIR, f"{video_id}.mp4")
+    if not os.path.exists(video_path):
+        return jsonify({"error": "Video not found — please re-analyze."}), 400
+
+    def generate():
+        audio_path = None
+        try:
+            yield _sse({"progress": 15, "message": "Searching YouTube for instrumental\u2026"})
+            audio_path = download_instrumental(song_name, artist)
+
+            yield _sse({"progress": 55, "message": "Mixing audio and encoding\u2026"})
+            export_id, _ = mix_and_export(video_path, audio_path, start_ms, video_vol, music_vol)
+
+            yield _sse({"progress": 100, "done": True, "export_id": export_id})
+        except Exception as e:
+            print(f"Export error: {e}")
+            yield _sse({"error": str(e)})
+        finally:
+            if audio_path and os.path.exists(audio_path):
+                os.remove(audio_path)
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.route("/download/<export_id>")
+def download_export(export_id):
+    if not all(c in "0123456789abcdef" for c in export_id):
+        return "Invalid ID", 400
+    path = os.path.join(EXPORT_DIR, f"{export_id}.mp4")
+    if not os.path.exists(path):
+        return "File not found or already downloaded", 404
+
+    @after_this_request
+    def cleanup(response):
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+        return response
+
+    return send_file(
+        path,
+        as_attachment=True,
+        download_name=f"resonance_{export_id[:8]}.mp4",
+        mimetype="video/mp4",
+    )
+
+
+@app.route("/cleanup/<video_id>", methods=["POST"])
+def cleanup_video(video_id):
+    if not all(c in "0123456789abcdef" for c in video_id):
+        return jsonify({"ok": False}), 400
+    path = os.path.join(UPLOAD_DIR, f"{video_id}.mp4")
+    if os.path.exists(path):
+        os.remove(path)
+    return jsonify({"ok": True})
 
 
 if __name__ == "__main__":

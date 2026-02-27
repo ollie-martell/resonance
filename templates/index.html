@@ -135,6 +135,15 @@
                     </div>
                 </div>
                 <div id="embed-iframe"></div>
+                <div id="exportArea" style="display:none; margin-top:14px">
+                    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap">
+                        <button class="reroll-btn" id="exportBtn">&#11015;&nbsp;&nbsp;Export with Instrumental</button>
+                        <span id="exportStatus" style="font-size:0.82rem; opacity:0.7"></span>
+                    </div>
+                    <div class="progress-bar" id="exportProgressBar" style="display:none; margin-top:8px">
+                        <div class="progress-fill" id="exportProgressFill"></div>
+                    </div>
+                </div>
             </div>
 
             <div class="glass fade-in fade-in-4">
@@ -170,6 +179,9 @@
         let videoBlobUrl    = null;
         let lastTranscript  = null;
         let lastDuration    = null;
+        let lastVideoId     = null;
+        let currentSongName   = '';
+        let currentSongArtist = '';
         let excludedTracks  = new Set();
         let audioCtx        = null;
         let videoGainNode   = null;
@@ -293,6 +305,88 @@
             await spotifyPlayer.seek(pos).catch(() => {});
         });
 
+        // ── Export ──────────────────────────────────────────────────────
+        const exportArea         = document.getElementById('exportArea');
+        const exportBtn          = document.getElementById('exportBtn');
+        const exportStatus       = document.getElementById('exportStatus');
+        const exportProgressBar  = document.getElementById('exportProgressBar');
+        const exportProgressFill = document.getElementById('exportProgressFill');
+
+        exportBtn.addEventListener('click', async () => {
+            if (!lastVideoId || !currentUri) return;
+
+            const start_ms  = songDurationMs > 0
+                ? Math.round((parseInt(songScrubber.value) / 1000) * songDurationMs)
+                : 0;
+            const video_vol = parseFloat(videoVolSlider.value);
+            const music_vol = parseFloat(musicVolSlider.value);
+
+            exportBtn.disabled = true;
+            exportStatus.textContent = '';
+            exportProgressBar.style.display = 'block';
+            exportProgressFill.style.width = '0%';
+
+            try {
+                const resp = await fetch('/export', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        video_id:  lastVideoId,
+                        song_name: currentSongName,
+                        artist:    currentSongArtist,
+                        start_ms,
+                        video_vol,
+                        music_vol,
+                    }),
+                });
+
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    exportStatus.textContent = err.error || 'Export failed.';
+                    exportBtn.disabled = false;
+                    exportProgressBar.style.display = 'none';
+                    return;
+                }
+
+                const reader  = resp.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    const parts = buffer.split('\n\n');
+                    buffer = parts.pop();
+                    for (const part of parts) {
+                        if (!part.startsWith('data: ')) continue;
+                        const event = JSON.parse(part.slice(6));
+                        if (event.error) {
+                            exportStatus.textContent = 'Error: ' + event.error;
+                            exportBtn.disabled = false;
+                            exportProgressBar.style.display = 'none';
+                            return;
+                        }
+                        if (event.message) exportStatus.textContent = event.message;
+                        if (event.progress != null) exportProgressFill.style.width = event.progress + '%';
+                        if (event.done) {
+                            setTimeout(() => {
+                                exportProgressBar.style.display = 'none';
+                                exportProgressFill.style.width = '0%';
+                                exportStatus.innerHTML = `<a href="/download/${event.export_id}" style="color:rgba(255,255,255,0.9);text-decoration:underline;font-weight:500">&#11015; Download ready — click to save</a>`;
+                                exportBtn.disabled = false;
+                            }, 300);
+                            return;
+                        }
+                    }
+                }
+            } catch {
+                exportStatus.textContent = 'Export failed — is the server running?';
+                exportBtn.disabled = false;
+                exportProgressBar.style.display = 'none';
+            }
+        });
+
         // ── Upload ──────────────────────────────────────────────────────
         const uploadZone = document.getElementById('uploadZone');
         const fileInput  = document.getElementById('fileInput');
@@ -400,6 +494,7 @@
 
             lastTranscript = data.transcript;
             lastDuration   = data.duration || null;
+            lastVideoId    = data.video_id  || null;
             excludedTracks = new Set();
 
             renderTracks(data.tracks);
@@ -422,7 +517,7 @@
                         <div class="genre">${escHtml(track.genre || '')}</div>
                         <div class="reason">${escHtml(track.reason || '')}</div>
                     </div>
-                    <button class="play-btn" data-uri="${track.uri}" data-duration="${track.duration_ms||0}">&#9654;</button>
+                    <button class="play-btn" data-uri="${track.uri}" data-duration="${track.duration_ms||0}" data-name="${encodeURIComponent(track.name)}" data-artist="${encodeURIComponent(track.artist)}">&#9654;</button>
                 </div>`;
             }
 
@@ -452,15 +547,23 @@
                         // New song selected
                         if (currentPlayBtn) currentPlayBtn.innerHTML = '&#9654;';
                         stopSeekPoll();
-                        currentUri     = uri;
-                        currentPlayBtn = btn;
-                        songDurationMs = parseInt(btn.dataset.duration) || 0;
-                        btn.innerHTML  = '&#9646;&#9646;';
+                        currentUri        = uri;
+                        currentPlayBtn    = btn;
+                        songDurationMs    = parseInt(btn.dataset.duration) || 0;
+                        currentSongName   = decodeURIComponent(btn.dataset.name   || '');
+                        currentSongArtist = decodeURIComponent(btn.dataset.artist || '');
+                        btn.innerHTML     = '&#9646;&#9646;';
 
                         // Show and reset scrubber
                         songScrubRow.style.display = '';
                         songScrubber.value = 0;
                         songTime.textContent = '0:00 / ' + formatTime(songDurationMs);
+
+                        // Show export area, reset status
+                        exportArea.style.display = 'block';
+                        exportStatus.textContent = '';
+                        exportProgressBar.style.display = 'none';
+                        exportProgressFill.style.width = '0%';
 
                         const playResp = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${spotifyDeviceId}`, {
                             method: 'PUT',
@@ -517,8 +620,10 @@
             stopSeekPoll();
             if (spotifyPlayer) spotifyPlayer.pause();
             if (currentPlayBtn) { currentPlayBtn.innerHTML = '&#9654;'; currentPlayBtn = null; }
-            currentUri = null;
-            songDurationMs = 0;
+            currentUri        = null;
+            currentSongName   = '';
+            currentSongArtist = '';
+            songDurationMs    = 0;
             songScrubRow.style.display = 'none';
             songScrubber.value = 0;
             videoEl.pause(); videoEl.src = '';
@@ -530,9 +635,18 @@
             analyzeBtn.style.display = 'none';
             fileInput.value = '';
             lastTranscript = null;
-            lastDuration = null;
+            lastDuration   = null;
             excludedTracks = new Set();
             document.getElementById('rerollBtn').style.display = 'none';
+            // Clean up video file on server
+            if (lastVideoId) {
+                fetch('/cleanup/' + lastVideoId, { method: 'POST' }).catch(() => {});
+                lastVideoId = null;
+            }
+            exportArea.style.display = 'none';
+            exportStatus.textContent = '';
+            exportProgressBar.style.display = 'none';
+            exportProgressFill.style.width = '0%';
             window.scrollTo({ top: 0, behavior: 'smooth' });
         });
     </script>
