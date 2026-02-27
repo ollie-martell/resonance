@@ -918,23 +918,21 @@
                 if (!raw) return;
                 const s = JSON.parse(raw);
                 if (!s.video_id || !s.tracks || !s.tracks.length) return;
-                lastTranscript = s.transcript || '';
-                lastDuration   = s.duration   || null;
-                lastVideoId    = s.video_id;
-                document.getElementById('transcriptText').textContent = s.transcript || '';
-                document.getElementById('vibeRead').textContent       = s.vibe_read  || '';
-                excludedTracks = new Set();
-                renderTracks(s.tracks);
-                document.getElementById('rerollBtn').style.display = 'inline-block';
-                results.style.display = 'block';
-                exportArea.style.display = 'block';
-
-                // Restore video from server so preview and live mix still work
+                // Only restore if the video file still exists on the server
                 fetch('/serve-video/' + s.video_id, { method: 'HEAD' }).then(r => {
-                    if (r.ok) {
-                        videoEl.src = '/serve-video/' + s.video_id;
-                        document.getElementById('playerSection').style.display = 'block';
-                    }
+                    if (!r.ok) { clearSession(); return; }
+                    lastTranscript = s.transcript || '';
+                    lastDuration   = s.duration   || null;
+                    lastVideoId    = s.video_id;
+                    document.getElementById('transcriptText').textContent = s.transcript || '';
+                    document.getElementById('vibeRead').textContent       = s.vibe_read  || '';
+                    excludedTracks = new Set();
+                    renderTracks(s.tracks);
+                    document.getElementById('rerollBtn').style.display = 'inline-block';
+                    results.style.display = 'block';
+                    exportArea.style.display = 'block';
+                    videoEl.src = '/serve-video/' + s.video_id;
+                    document.getElementById('playerSection').style.display = 'block';
                 }).catch(() => {});
             } catch {}
         })();
