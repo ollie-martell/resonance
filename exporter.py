@@ -46,6 +46,20 @@ def download_instrumental(song_name, artist):
     )
 
 
+def get_audio_duration_ms(path):
+    """Return duration of any media file in milliseconds."""
+    result = subprocess.run(
+        [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            path,
+        ],
+        capture_output=True, text=True,
+    )
+    return int(float(result.stdout.strip()) * 1000)
+
+
 def _get_video_duration(video_path):
     result = subprocess.run(
         [

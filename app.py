@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 from transcriber import transcribe
 from vibe_analyzer import analyze_vibe
 from spotify_recommender import recommend
-from exporter import download_instrumental, mix_and_export, EXPORT_DIR
+from exporter import download_instrumental, mix_and_export, get_audio_duration_ms, EXPORT_DIR
 
 load_dotenv()
 
@@ -168,11 +168,24 @@ def export_video():
     if not os.path.exists(video_path):
         return jsonify({"error": "Video not found — please re-analyze."}), 400
 
+    instrumental_id = data.get("instrumental_id", "")
+    if instrumental_id and not all(c in "0123456789abcdef" for c in instrumental_id):
+        instrumental_id = ""
+
     def generate():
-        audio_path = None
+        audio_path   = None
+        used_cached  = False
         try:
-            yield _sse({"progress": 15, "message": "Searching YouTube for instrumental\u2026"})
-            audio_path = download_instrumental(song_name, artist)
+            # Reuse already-downloaded instrumental if available
+            if instrumental_id:
+                candidate = os.path.join(UPLOAD_DIR, f"instr_{instrumental_id}.mp3")
+                if os.path.exists(candidate):
+                    audio_path  = candidate
+                    used_cached = True
+
+            if not used_cached:
+                yield _sse({"progress": 15, "message": "Searching YouTube for instrumental\u2026"})
+                audio_path = download_instrumental(song_name, artist)
 
             yield _sse({"progress": 55, "message": "Mixing audio and encoding\u2026"})
             export_id, _ = mix_and_export(video_path, audio_path, start_ms, video_vol, music_vol)
@@ -182,7 +195,8 @@ def export_video():
             print(f"Export error: {e}")
             yield _sse({"error": str(e)})
         finally:
-            if audio_path and os.path.exists(audio_path):
+            # Keep cached file so user can re-export with different settings
+            if audio_path and not used_cached and os.path.exists(audio_path):
                 os.remove(audio_path)
 
     return Response(
@@ -190,6 +204,50 @@ def export_video():
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.route("/prepare-instrumental", methods=["POST"])
+def prepare_instrumental():
+    data      = request.get_json()
+    song_name = data.get("song_name", "")
+    artist    = data.get("artist", "")
+
+    def generate():
+        try:
+            yield _sse({"progress": 30, "message": "Searching YouTube for instrumental\u2026"})
+            mp3_path = download_instrumental(song_name, artist)
+
+            # Extract the uid embedded in the filename: instr_{uid}.mp3
+            filename     = os.path.basename(mp3_path)
+            instr_id     = filename[6:-4]           # strip "instr_" and ".mp3"
+            duration_ms  = get_audio_duration_ms(mp3_path)
+
+            yield _sse({
+                "progress":        100,
+                "done":            True,
+                "instrumental_id": instr_id,
+                "duration_ms":     duration_ms,
+            })
+        except Exception as e:
+            print(f"prepare-instrumental error: {e}")
+            yield _sse({"error": str(e)})
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.route("/serve-instrumental/<instr_id>")
+def serve_instrumental(instr_id):
+    if not all(c in "0123456789abcdef" for c in instr_id):
+        return "Invalid ID", 400
+    path = os.path.join(UPLOAD_DIR, f"instr_{instr_id}.mp3")
+    if not os.path.exists(path):
+        return "Not found", 404
+    # conditional=True enables HTTP Range support so the audio element can seek
+    return send_file(path, mimetype="audio/mpeg", conditional=True)
 
 
 @app.route("/download/<export_id>")
