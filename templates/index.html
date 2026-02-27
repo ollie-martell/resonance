@@ -153,14 +153,13 @@
                             <input type="range" class="vol-slider" id="exportMusicVol" min="0" max="1" step="0.01" value="0.8">
                             <span class="vol-pct" id="exportMusicVolPct">80%</span>
                         </div>
+                        <div class="progress-bar" id="exportProgressBar" style="display:none; margin-bottom:8px">
+                            <div class="progress-fill" id="exportProgressFill"></div>
+                        </div>
                         <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap">
                             <button class="reroll-btn" id="exportCancelBtn">Cancel</button>
-                            <button class="reroll-btn" id="exportLoadBtn">&#9654;&nbsp;&nbsp;Load &amp; Preview</button>
                             <button class="reroll-btn" id="exportConfirmBtn" style="display:none">&#11015;&nbsp;&nbsp;Export</button>
                             <span id="exportStatus" style="font-size:0.82rem; opacity:0.7; flex:1"></span>
-                        </div>
-                        <div class="progress-bar" id="exportProgressBar" style="display:none; margin-top:8px">
-                            <div class="progress-fill" id="exportProgressFill"></div>
                         </div>
                         <div id="exportPreviewHint" style="display:none; font-size:0.8rem; opacity:0.55; margin-top:8px; line-height:1.5">
                             Press play on the video to hear the mix. Adjust sliders and scrubber in real time, then Export when ready.
@@ -348,20 +347,19 @@
         const exportMusicVol     = document.getElementById('exportMusicVol');
         const exportMusicVolPct  = document.getElementById('exportMusicVolPct');
         const exportCancelBtn    = document.getElementById('exportCancelBtn');
-        const exportLoadBtn      = document.getElementById('exportLoadBtn');
         const exportConfirmBtn   = document.getElementById('exportConfirmBtn');
         const exportStatus       = document.getElementById('exportStatus');
         const exportProgressBar  = document.getElementById('exportProgressBar');
         const exportProgressFill = document.getElementById('exportProgressFill');
         const exportPreviewHint  = document.getElementById('exportPreviewHint');
 
-        let instrAudioEl        = null;
-        let instrGainNode       = null;
-        let currentInstrId      = null;
-        let exportPreviewMode   = false;
-        let exportInstrDurMs    = 0;
+        let instrAudioEl         = null;
+        let instrGainNode        = null;
+        let currentInstrId       = null;
+        let exportPreviewMode    = false;
+        let exportInstrDurMs     = 0;
         let exportInstrPollTimer = null;
-        let isExportSeeking     = false;
+        let isExportSeeking      = false;
 
         function startExportPoll() {
             if (exportInstrPollTimer) return;
@@ -376,105 +374,102 @@
             }, 200);
         }
 
-        function stopExportPoll() {
-            clearInterval(exportInstrPollTimer);
-            exportInstrPollTimer = null;
-        }
+        function stopExportPoll() { clearInterval(exportInstrPollTimer); exportInstrPollTimer = null; }
 
+        // Full teardown — called on song switch or page reset
         function exitExportPreview() {
             exportPreviewMode = false;
             stopExportPoll();
-            if (instrAudioEl) {
-                instrAudioEl.pause();
-                instrAudioEl.src = '';
-                instrAudioEl = null;
-                instrGainNode = null;
-            }
+            if (instrGainNode) { try { instrGainNode.disconnect(); } catch {} instrGainNode = null; }
+            if (instrAudioEl)  { instrAudioEl.pause(); instrAudioEl.src = ''; instrAudioEl = null; }
             currentInstrId   = null;
             exportInstrDurMs = 0;
-            // Restore video gain to Spotify-preview levels
-            if (videoGainNode) {
-                videoGainNode.gain.value = VIDEO_MAX * parseFloat(videoVolSlider.value);
-            }
+            if (videoGainNode) videoGainNode.gain.value = VIDEO_MAX * parseFloat(videoVolSlider.value);
         }
 
+        // Called on song switch / page reset — full wipe
         function resetExportPanel() {
             exitExportPreview();
-            exportSettings.style.display     = 'none';
-            exportLoadBtn.style.display      = '';
-            exportLoadBtn.disabled           = false;
-            exportConfirmBtn.style.display   = 'none';
-            exportConfirmBtn.disabled        = false;
-            exportCancelBtn.disabled         = false;
-            exportPreviewHint.style.display  = 'none';
-            exportStatus.textContent         = '';
-            exportProgressBar.style.display  = 'none';
-            exportProgressFill.style.width   = '0%';
+            exportSettings.style.display    = 'none';
+            exportConfirmBtn.style.display  = 'none';
+            exportConfirmBtn.disabled       = false;
+            exportCancelBtn.disabled        = false;
+            exportPreviewHint.style.display = 'none';
+            exportStatus.textContent        = '';
+            exportProgressBar.style.display = 'none';
+            exportProgressFill.style.width  = '0%';
+            exportTriggerBtn.disabled       = false;
         }
 
-        // Scrubber — update display and seek instrumental while dragging
+        // Wire up gain nodes and switch into live preview mode
+        function goLive() {
+            if (videoGainNode) videoGainNode.gain.value = parseFloat(exportVideoVol.value);
+            if (instrGainNode) instrGainNode.gain.value = parseFloat(exportMusicVol.value);
+            if (instrAudioEl && exportInstrDurMs > 0)
+                instrAudioEl.currentTime = (parseInt(exportScrubber.value) / 1000) * exportInstrDurMs / 1000;
+            if (spotifyPlayer && currentUri) {
+                syncingPlayback = true;
+                spotifyPlayer.pause().catch(() => {}).finally(() => { syncingPlayback = false; });
+            }
+            exportPreviewMode = true;
+            exportProgressBar.style.display = 'none';
+            exportProgressFill.style.width  = '0%';
+            exportStatus.textContent        = '';
+            exportConfirmBtn.style.display  = '';
+            exportConfirmBtn.disabled       = false;
+            exportCancelBtn.disabled        = false;
+            exportPreviewHint.style.display = 'block';
+            startExportPoll();
+        }
+
+        // Scrubber — live seek while dragging
         exportScrubber.addEventListener('mousedown',  () => { isExportSeeking = true; });
         exportScrubber.addEventListener('touchstart', () => { isExportSeeking = true; }, { passive: true });
         exportScrubber.addEventListener('input', () => {
             const dur = exportInstrDurMs || songDurationMs;
-            if (dur > 0) {
-                const pos = (parseInt(exportScrubber.value) / 1000) * dur;
-                exportScrubTime.textContent = formatTime(pos) + ' / ' + formatTime(dur);
-            }
+            if (dur > 0) exportScrubTime.textContent = formatTime((parseInt(exportScrubber.value) / 1000) * dur) + ' / ' + formatTime(dur);
         });
         exportScrubber.addEventListener('change', () => {
             isExportSeeking = false;
-            if (!instrAudioEl) return;
-            const dur = exportInstrDurMs;
-            if (dur > 0) {
-                instrAudioEl.currentTime = (parseInt(exportScrubber.value) / 1000) * dur / 1000;
-            }
+            if (instrAudioEl && exportInstrDurMs > 0)
+                instrAudioEl.currentTime = (parseInt(exportScrubber.value) / 1000) * exportInstrDurMs / 1000;
         });
 
-        // Live volume control — update gain nodes during preview
+        // Volume sliders — update live while playing
         exportVideoVol.addEventListener('input', () => {
             exportVideoVolPct.textContent = Math.round(parseFloat(exportVideoVol.value) * 100) + '%';
-            if (exportPreviewMode && videoGainNode) {
-                videoGainNode.gain.value = parseFloat(exportVideoVol.value);
-            }
+            if (exportPreviewMode && videoGainNode) videoGainNode.gain.value = parseFloat(exportVideoVol.value);
         });
         exportMusicVol.addEventListener('input', () => {
             exportMusicVolPct.textContent = Math.round(parseFloat(exportMusicVol.value) * 100) + '%';
             if (instrGainNode) instrGainNode.gain.value = parseFloat(exportMusicVol.value);
         });
 
-        // Open panel — pre-fill from current playback position
-        exportTriggerBtn.addEventListener('click', () => {
+        // Open panel — pre-fill controls and immediately start downloading instrumental
+        exportTriggerBtn.addEventListener('click', async () => {
+            if (!currentSongName) return;
+
+            // Pre-fill from current playback state
             exportScrubber.value = songScrubber.value;
-            const dur = songDurationMs;
-            const pos = dur > 0 ? (parseInt(exportScrubber.value) / 1000) * dur : 0;
-            exportScrubTime.textContent = formatTime(pos) + ' / ' + formatTime(dur);
+            const refDur = exportInstrDurMs || songDurationMs;
+            exportScrubTime.textContent = formatTime((parseInt(exportScrubber.value) / 1000) * refDur) + ' / ' + formatTime(refDur);
             exportVideoVol.value = videoVolSlider.value;
             exportVideoVolPct.textContent = Math.round(parseFloat(videoVolSlider.value) * 100) + '%';
             exportMusicVol.value = musicVolSlider.value;
             exportMusicVolPct.textContent = Math.round(parseFloat(musicVolSlider.value) * 100) + '%';
-            exportLoadBtn.style.display    = '';
-            exportLoadBtn.disabled         = false;
-            exportConfirmBtn.style.display = 'none';
-            exportPreviewHint.style.display = 'none';
-            exportStatus.textContent       = '';
-            exportProgressBar.style.display = 'none';
-            exportProgressFill.style.width  = '0%';
-            exportSettings.style.display   = 'block';
-        });
+            exportSettings.style.display = 'block';
 
-        exportCancelBtn.addEventListener('click', () => { resetExportPanel(); });
+            // If instrumental already loaded for this song, go live immediately
+            if (currentInstrId && instrAudioEl) { goLive(); return; }
 
-        // Download and set up live preview
-        exportLoadBtn.addEventListener('click', async () => {
-            if (!currentSongName) return;
-            exportLoadBtn.disabled  = true;
-            exportCancelBtn.disabled = true;
-            exportStatus.textContent = '';
-            exportProgressBar.style.display = 'block';
-            exportProgressFill.style.width  = '0%';
+            // Otherwise download it now — controls are visible so user can pre-position while it loads
+            exportTriggerBtn.disabled       = true;
+            exportCancelBtn.disabled        = false;
             exportConfirmBtn.style.display  = 'none';
             exportPreviewHint.style.display = 'none';
+            exportProgressBar.style.display = 'block';
+            exportProgressFill.style.width  = '0%';
+            exportStatus.textContent        = '';
 
             try {
                 const resp = await fetch('/prepare-instrumental', {
@@ -482,97 +477,74 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ song_name: currentSongName, artist: currentSongArtist }),
                 });
-                if (!resp.ok) {
-                    const err = await resp.json().catch(() => ({}));
-                    exportStatus.textContent = err.error || 'Failed to load instrumental.';
-                    exportLoadBtn.disabled = false;
-                    exportCancelBtn.disabled = false;
-                    exportProgressBar.style.display = 'none';
-                    return;
-                }
+                if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).error || 'Failed');
 
-                const reader  = resp.body.getReader();
-                const decoder = new TextDecoder();
+                const reader = resp.body.getReader(), decoder = new TextDecoder();
                 let buffer = '';
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
                     buffer += decoder.decode(value, { stream: true });
-                    const parts = buffer.split('\n\n');
-                    buffer = parts.pop();
+                    const parts = buffer.split('\n\n'); buffer = parts.pop();
                     for (const part of parts) {
                         if (!part.startsWith('data: ')) continue;
                         const ev = JSON.parse(part.slice(6));
-                        if (ev.error) {
-                            exportStatus.textContent = 'Error: ' + ev.error;
-                            exportLoadBtn.disabled = false;
-                            exportCancelBtn.disabled = false;
-                            exportProgressBar.style.display = 'none';
-                            return;
-                        }
+                        if (ev.error) throw new Error(ev.error);
                         if (ev.message) exportStatus.textContent = ev.message;
                         if (ev.progress != null) exportProgressFill.style.width = ev.progress + '%';
                         if (ev.done) {
-                            setTimeout(() => {
-                                exportProgressBar.style.display = 'none';
-                                exportProgressFill.style.width  = '0%';
-                                exportStatus.textContent = '';
+                            exportInstrDurMs = ev.duration_ms || 0;
 
-                                // Tear down any previous preview
-                                exitExportPreview();
+                            // Clean up any previous audio chain
+                            if (instrGainNode) { try { instrGainNode.disconnect(); } catch {} instrGainNode = null; }
+                            if (instrAudioEl)  { instrAudioEl.pause(); instrAudioEl.src = ''; instrAudioEl = null; }
 
-                                // Set up Web Audio for the instrumental
-                                exportInstrDurMs = ev.duration_ms || 0;
-                                initAudio(); // ensure audioCtx exists
+                            initAudio();
+                            instrAudioEl = new Audio();
+                            instrAudioEl.crossOrigin = 'anonymous';
+                            instrAudioEl.preload     = 'auto';
+                            instrAudioEl.src         = `/serve-instrumental/${ev.instrumental_id}`;
+                            instrAudioEl.addEventListener('ended', () => videoEl.pause());
 
-                                instrAudioEl = new Audio();
-                                instrAudioEl.crossOrigin = 'anonymous';
-                                instrAudioEl.preload     = 'auto';
-                                instrAudioEl.src = `/serve-instrumental/${ev.instrumental_id}`;
-                                instrAudioEl.addEventListener('ended', () => videoEl.pause());
+                            const instrSrc = audioCtx.createMediaElementSource(instrAudioEl);
+                            instrGainNode  = audioCtx.createGain();
+                            instrSrc.connect(instrGainNode);
+                            instrGainNode.connect(audioCtx.destination);
 
-                                const instrSrc = audioCtx.createMediaElementSource(instrAudioEl);
-                                instrGainNode  = audioCtx.createGain();
-                                instrGainNode.gain.value = parseFloat(exportMusicVol.value);
-                                instrSrc.connect(instrGainNode);
-                                instrGainNode.connect(audioCtx.destination);
+                            currentInstrId = ev.instrumental_id;
 
-                                // Seek instrumental to chosen start
-                                if (exportInstrDurMs > 0) {
-                                    instrAudioEl.currentTime = (parseInt(exportScrubber.value) / 1000) * exportInstrDurMs / 1000;
-                                    exportScrubTime.textContent = formatTime((parseInt(exportScrubber.value) / 1000) * exportInstrDurMs) + ' / ' + formatTime(exportInstrDurMs);
-                                }
+                            // Update time display with actual instrumental duration
+                            const pos = (parseInt(exportScrubber.value) / 1000) * exportInstrDurMs;
+                            exportScrubTime.textContent = formatTime(pos) + ' / ' + formatTime(exportInstrDurMs);
 
-                                // Switch video gain to export levels (no dB cap)
-                                if (videoGainNode) videoGainNode.gain.value = parseFloat(exportVideoVol.value);
-
-                                // Pause Spotify so it doesn't fight the preview
-                                if (spotifyPlayer && currentUri) {
-                                    syncingPlayback = true;
-                                    spotifyPlayer.pause().catch(() => {}).finally(() => { syncingPlayback = false; });
-                                }
-
-                                currentInstrId    = ev.instrumental_id;
-                                exportPreviewMode = true;
-
-                                exportLoadBtn.style.display     = 'none';
-                                exportConfirmBtn.style.display  = '';
-                                exportConfirmBtn.disabled       = false;
-                                exportCancelBtn.disabled        = false;
-                                exportPreviewHint.style.display = 'block';
-
-                                startExportPoll();
-                            }, 300);
+                            exportTriggerBtn.disabled = false;
+                            goLive();
                             return;
                         }
                     }
                 }
-            } catch {
-                exportStatus.textContent = 'Failed to load instrumental.';
-                exportLoadBtn.disabled   = false;
-                exportCancelBtn.disabled = false;
+            } catch(e) {
+                exportStatus.textContent        = 'Error: ' + e.message;
                 exportProgressBar.style.display = 'none';
+                exportTriggerBtn.disabled       = false;
+                exportCancelBtn.disabled        = false;
             }
+        });
+
+        // Cancel — hide panel but keep instrumental cached for instant re-open
+        exportCancelBtn.addEventListener('click', () => {
+            exportPreviewMode = false;
+            stopExportPoll();
+            if (instrAudioEl) instrAudioEl.pause();
+            if (videoGainNode) videoGainNode.gain.value = VIDEO_MAX * parseFloat(videoVolSlider.value);
+            exportSettings.style.display    = 'none';
+            exportConfirmBtn.style.display  = 'none';
+            exportPreviewHint.style.display = 'none';
+            exportStatus.textContent        = '';
+            exportProgressBar.style.display = 'none';
+            exportProgressFill.style.width  = '0%';
+            exportTriggerBtn.disabled       = false;
+            exportCancelBtn.disabled        = false;
         });
 
         // Confirm and render final MP4

@@ -12,6 +12,7 @@ os.makedirs(EXPORT_DIR, exist_ok=True)
 def download_instrumental(song_name, artist):
     """Search YouTube for an instrumental and return the path to the downloaded mp3."""
     queries = [
+        f"{song_name} {artist} instrumental no vocals",
         f"{song_name} {artist} instrumental",
         f"{song_name} {artist} karaoke",
         f"{song_name} instrumental",
