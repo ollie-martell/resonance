@@ -725,6 +725,25 @@
             }
         });
 
+        function saveSession() {
+            if (!lastVideoId) return;
+            try {
+                localStorage.setItem('resonance_session', JSON.stringify({
+                    transcript:  lastTranscript,
+                    vibe_read:   document.getElementById('vibeRead').textContent,
+                    tracks:      _lastTracks,
+                    video_id:    lastVideoId,
+                    duration:    lastDuration,
+                }));
+            } catch {}
+        }
+
+        function clearSession() {
+            try { localStorage.removeItem('resonance_session'); } catch {}
+        }
+
+        let _lastTracks = [];
+
         function renderResults(data) {
             document.getElementById('transcriptText').textContent = data.transcript;
             document.getElementById('vibeRead').textContent = data.vibe_read || '';
@@ -742,9 +761,11 @@
             renderTracks(data.tracks);
             document.getElementById('rerollBtn').style.display = 'inline-block';
             results.style.display = 'block';
+            saveSession();
         }
 
         function renderTracks(tracks) {
+            _lastTracks = tracks;
             tracks.forEach(t => excludedTracks.add(t.name));
 
             const grid = document.getElementById('tracksGrid');
@@ -844,6 +865,7 @@
                 const data = await resp.json();
                 if (!resp.ok) { showError(data.error || 'Reroll failed.'); return; }
                 renderTracks(data.tracks);
+                saveSession();
             } catch {
                 showError('Reroll failed — is the server running?');
             } finally {
@@ -885,8 +907,30 @@
             }
             resetExportPanel();
             exportArea.style.display = 'none';
+            clearSession();
             window.scrollTo({ top: 0, behavior: 'smooth' });
         });
+
+        // ── Restore session after page reload (e.g. Spotify reconnect) ──
+        (function restoreSession() {
+            try {
+                const raw = localStorage.getItem('resonance_session');
+                if (!raw) return;
+                const s = JSON.parse(raw);
+                if (!s.video_id || !s.tracks || !s.tracks.length) return;
+                lastTranscript = s.transcript || '';
+                lastDuration   = s.duration   || null;
+                lastVideoId    = s.video_id;
+                document.getElementById('transcriptText').textContent = s.transcript || '';
+                document.getElementById('vibeRead').textContent       = s.vibe_read  || '';
+                excludedTracks = new Set();
+                renderTracks(s.tracks);
+                document.getElementById('rerollBtn').style.display = 'inline-block';
+                results.style.display = 'block';
+                exportArea.style.display = 'block';
+                // Note: video preview unavailable after reload, but export still works
+            } catch {}
+        })();
     </script>
 </body>
 </html>
