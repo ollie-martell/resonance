@@ -220,14 +220,14 @@ def prepare_instrumental():
 
             # Extract the uid embedded in the filename: instr_{uid}.mp3
             filename     = os.path.basename(mp3_path)
-            instr_id     = filename[6:-4]           # strip "instr_" and ".mp3"
-            duration_ms  = get_audio_duration_ms(mp3_path)
+            instr_id      = filename[6:-4]           # strip "instr_" and ".mp3"
+            audio_dur_ms  = get_audio_duration_ms(mp3_path)
 
             yield _sse({
                 "progress":        100,
                 "done":            True,
                 "instrumental_id": instr_id,
-                "duration_ms":     duration_ms,
+                "duration_ms":     audio_dur_ms,
             })
         except Exception as e:
             print(f"prepare-instrumental error: {e}")
